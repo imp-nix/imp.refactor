@@ -6,6 +6,35 @@ The [imp registry](https://github.com/imp-nix/imp.lib) maps directory structure 
 
 A pure-Nix solution cannot work here. Flake evaluation copies everything to the store before code runs, so the scanned files and registry always reflect the same committed state. imp.refactor operates directly on working tree files while evaluating the registry from a git ref, allowing it to detect drift between the two.
 
+## Installation
+
+Add to your flake inputs:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    imp-refactor.url = "github:imp-nix/imp.refactor";
+    imp-refactor.inputs.nixpkgs.follows = "nixpkgs";
+  };
+}
+```
+
+If you also use imp.lib, you can reduce lockfile duplication by following its bundled dependencies:
+
+```nix
+{
+  inputs = {
+    imp.url = "github:imp-nix/imp.lib";
+    imp-refactor.url = "github:imp-nix/imp.refactor";
+    imp-refactor.inputs.nixpkgs.follows = "nixpkgs";
+    imp-refactor.inputs.treefmt-nix.follows = "imp/treefmt-nix";
+    imp-refactor.inputs.nix-unit.follows = "imp/nix-unit";
+    imp-refactor.inputs.imp-fmt.follows = "imp/imp-fmt";
+  };
+}
+```
+
 ## Usage
 
 ```sh
