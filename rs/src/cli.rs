@@ -27,6 +27,11 @@ pub enum Commands {
         #[arg(long, default_value = "registry")]
         registry_name: String,
 
+        /// Git ref to evaluate registry from (e.g., HEAD, HEAD^, main).
+        /// Compares working tree files against registry at this ref.
+        #[arg(long)]
+        git_ref: Option<String>,
+
         /// Explicit rename mappings in `old=new` format. Longest prefix wins.
         #[arg(long, value_parser = parse_rename)]
         rename: Vec<(String, String)>,
@@ -46,6 +51,11 @@ pub enum Commands {
         #[arg(long)]
         write: bool,
 
+        /// Interactively confirm each file's changes before applying.
+        /// Implies --write.
+        #[arg(short, long)]
+        interactive: bool,
+
         /// Paths to scan. Defaults to current directory.
         #[arg(short, long)]
         paths: Option<Vec<PathBuf>>,
@@ -53,6 +63,10 @@ pub enum Commands {
         /// Registry attribute name in flake outputs.
         #[arg(long, default_value = "registry")]
         registry_name: String,
+
+        /// Git ref to evaluate registry from (e.g., HEAD, HEAD^, main).
+        #[arg(long)]
+        git_ref: Option<String>,
 
         /// Explicit rename mappings in `old=new` format.
         #[arg(long, value_parser = parse_rename)]
@@ -64,6 +78,10 @@ pub enum Commands {
         /// Registry attribute name in flake outputs.
         #[arg(long, default_value = "registry")]
         registry_name: String,
+
+        /// Git ref to evaluate registry from (e.g., HEAD, HEAD^, main).
+        #[arg(long)]
+        git_ref: Option<String>,
 
         /// Maximum tree depth to display.
         #[arg(long)]

@@ -160,6 +160,8 @@ fn failure_reason(path: &str, valid_paths: &HashSet<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scanner::{RegistryRef, extract_registry_refs};
+    use std::path::PathBuf;
 
     fn paths(items: &[&str]) -> HashSet<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -170,6 +172,45 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    fn make_ref(path: &str) -> RegistryRef {
+        RegistryRef {
+            path: path.to_string(),
+            file: PathBuf::from("test.nix"),
+            line: 1,
+            column: 1,
+            start_offset: 0,
+            end_offset: 0,
+        }
+    }
+
+    /// Valid paths from complex-renames registry structure.
+    fn complex_registry_paths() -> HashSet<String> {
+        paths(&[
+            "users",
+            "users.alice",
+            "users.alice.programs",
+            "users.alice.programs.editor",
+            "users.alice.programs.zsh",
+            "users.bob",
+            "users.bob.shell",
+            "services",
+            "services.database",
+            "services.database.postgresql",
+            "services.database.redis",
+            "services.web",
+            "services.web.nginx",
+            "services.web.caddy",
+            "profiles",
+            "profiles.desktop",
+            "profiles.desktop.gnome",
+            "profiles.server",
+            "profiles.server.minimal",
+            "lib",
+            "lib.helpers",
+            "lib.helpers.strings",
+        ])
     }
 
     #[test]
@@ -269,5 +310,246 @@ mod tests {
         let valid = paths(&["services.database.postgresql", "legacy.database.postgresql"]);
         let map = renames(&[]);
         assert_eq!(suggest_path("old.db.postgresql", &valid, &map), None);
+    }
+
+    // ==========================================================================
+    // Integration tests with analyze() function
+    // ==========================================================================
+
+    #[test]
+    fn analyze_detects_broken_refs() {
+        let valid = complex_registry_paths();
+        let refs = vec![
+            make_ref("users.alice"),             // valid
+            make_ref("home.alice.programs.zsh"), // broken
+            make_ref("svc.database.postgresql"), // broken
+        ];
+        let (broken, valid_count) = analyze(&refs, &valid, &HashMap::new());
+        assert_eq!(valid_count, 1);
+        assert_eq!(broken.len(), 2);
+        let broken_paths: Vec<_> = broken.iter().map(|b| b.reference.path.as_str()).collect();
+        assert!(broken_paths.contains(&"home.alice.programs.zsh"));
+        assert!(broken_paths.contains(&"svc.database.postgresql"));
+    }
+
+    #[test]
+    fn analyze_generates_suggestions() {
+        let valid = complex_registry_paths();
+        let refs = vec![
+            make_ref("home.alice.programs.editor"),
+            make_ref("svc.database.postgresql"),
+            make_ref("mods.profiles.desktop.gnome"),
+        ];
+        let (broken, _) = analyze(&refs, &valid, &HashMap::new());
+        let suggestions: HashMap<_, _> = broken
+            .iter()
+            .filter_map(|b| {
+                b.suggestion
+                    .as_ref()
+                    .map(|s| (b.reference.path.as_str(), s.as_str()))
+            })
+            .collect();
+        assert_eq!(
+            suggestions.get("home.alice.programs.editor"),
+            Some(&"users.alice.programs.editor")
+        );
+        assert_eq!(
+            suggestions.get("svc.database.postgresql"),
+            Some(&"services.database.postgresql")
+        );
+        assert_eq!(
+            suggestions.get("mods.profiles.desktop.gnome"),
+            Some(&"profiles.desktop.gnome")
+        );
+    }
+
+    #[test]
+    fn analyze_all_valid_refs_produces_no_broken() {
+        let valid = complex_registry_paths();
+        let refs = vec![
+            make_ref("users.alice.programs.editor"),
+            make_ref("users.alice.programs.zsh"),
+            make_ref("users.bob.shell"),
+            make_ref("services.database.postgresql"),
+            make_ref("services.web.nginx"),
+            make_ref("profiles.desktop.gnome"),
+            make_ref("lib.helpers.strings"),
+        ];
+        let (broken, valid_count) = analyze(&refs, &valid, &HashMap::new());
+        assert_eq!(broken.len(), 0);
+        assert_eq!(valid_count, 7);
+    }
+
+    #[test]
+    fn analyze_partial_valid_distinguishes_correctly() {
+        let valid = complex_registry_paths();
+        let refs = vec![
+            make_ref("users.alice.programs.editor"),  // valid
+            make_ref("services.database.postgresql"), // valid
+            make_ref("profiles.desktop.gnome"),       // valid
+            make_ref("home.bob.shell"),               // broken
+            make_ref("svc.web.caddy"),                // broken
+        ];
+        let (broken, valid_count) = analyze(&refs, &valid, &HashMap::new());
+        assert_eq!(valid_count, 3);
+        assert_eq!(broken.len(), 2);
+        let broken_paths: Vec<_> = broken.iter().map(|b| b.reference.path.as_str()).collect();
+        assert!(broken_paths.contains(&"home.bob.shell"));
+        assert!(broken_paths.contains(&"svc.web.caddy"));
+    }
+
+    #[test]
+    fn analyze_ambiguous_refs_without_suggestion() {
+        let valid = paths(&["a.foo", "b.foo"]);
+        let refs = vec![make_ref("x.foo")];
+        let (broken, _) = analyze(&refs, &valid, &HashMap::new());
+        assert_eq!(broken.len(), 1);
+        assert!(broken[0].suggestion.is_none());
+        assert!(broken[0].reason.as_ref().unwrap().contains("Ambiguous"));
+    }
+
+    #[test]
+    fn analyze_no_match_refs_without_suggestion() {
+        let valid = complex_registry_paths();
+        let refs = vec![make_ref("configs.base")];
+        let (broken, _) = analyze(&refs, &valid, &HashMap::new());
+        assert_eq!(broken.len(), 1);
+        assert!(broken[0].suggestion.is_none());
+        assert!(
+            broken[0]
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("No path ending in 'base'")
+        );
+    }
+
+    #[test]
+    fn analyze_deep_nesting_with_rename_map() {
+        let valid = complex_registry_paths();
+        let map = renames(&[
+            ("svc.db", "services.database"),
+            ("svc.http", "services.web"),
+            ("utils.helpers", "lib.helpers"),
+        ]);
+        let refs = vec![
+            make_ref("svc.db.postgresql"),
+            make_ref("svc.db.redis"),
+            make_ref("svc.http.nginx"),
+            make_ref("svc.http.caddy"),
+            make_ref("utils.helpers.strings"),
+        ];
+        let (broken, _) = analyze(&refs, &valid, &map);
+        let suggestions: HashMap<_, _> = broken
+            .iter()
+            .filter_map(|b| {
+                b.suggestion
+                    .as_ref()
+                    .map(|s| (b.reference.path.as_str(), s.as_str()))
+            })
+            .collect();
+        assert_eq!(
+            suggestions.get("svc.db.postgresql"),
+            Some(&"services.database.postgresql")
+        );
+        assert_eq!(
+            suggestions.get("svc.db.redis"),
+            Some(&"services.database.redis")
+        );
+        assert_eq!(
+            suggestions.get("svc.http.nginx"),
+            Some(&"services.web.nginx")
+        );
+        assert_eq!(
+            suggestions.get("svc.http.caddy"),
+            Some(&"services.web.caddy")
+        );
+        assert_eq!(
+            suggestions.get("utils.helpers.strings"),
+            Some(&"lib.helpers.strings")
+        );
+    }
+
+    // ==========================================================================
+    // Fixture-based integration tests
+    // ==========================================================================
+
+    #[test]
+    fn fixture_deep_nesting_all_suggestions_found() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/complex-renames/files/deep-nesting.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let valid = complex_registry_paths();
+        let (broken, _) = analyze(&refs, &valid, &HashMap::new());
+
+        // All 5 refs should be broken (old paths) but have suggestions
+        assert_eq!(broken.len(), 5);
+        for b in &broken {
+            assert!(
+                b.suggestion.is_some(),
+                "Expected suggestion for {}, got reason: {:?}",
+                b.reference.path,
+                b.reason
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_ambiguous_unique_leaves_get_suggestions() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/complex-renames/files/ambiguous.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let valid = complex_registry_paths();
+        let (broken, _) = analyze(&refs, &valid, &HashMap::new());
+
+        let by_path: HashMap<_, _> = broken
+            .iter()
+            .map(|b| (b.reference.path.as_str(), b))
+            .collect();
+
+        // "editor" only exists in one place -> should match
+        assert_eq!(
+            by_path["old.programs.editor"].suggestion.as_deref(),
+            Some("users.alice.programs.editor")
+        );
+        // "gnome" only exists in one place -> should match
+        assert_eq!(
+            by_path["old.desktop.gnome"].suggestion.as_deref(),
+            Some("profiles.desktop.gnome")
+        );
+        // "minimal" only exists in one place -> should match
+        assert_eq!(
+            by_path["config.server.minimal"].suggestion.as_deref(),
+            Some("profiles.server.minimal")
+        );
+        // "base" doesn't exist anywhere -> no match
+        assert!(by_path["configs.base"].suggestion.is_none());
+    }
+
+    #[test]
+    fn fixture_partial_valid_correct_counts() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/complex-renames/files/partial-valid.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let valid = complex_registry_paths();
+        let (broken, valid_count) = analyze(&refs, &valid, &HashMap::new());
+
+        assert_eq!(valid_count, 3); // 3 valid refs
+        assert_eq!(broken.len(), 2); // 2 broken refs
+        let broken_paths: Vec<_> = broken.iter().map(|b| b.reference.path.as_str()).collect();
+        assert!(broken_paths.contains(&"home.bob.shell"));
+        assert!(broken_paths.contains(&"svc.web.caddy"));
+    }
+
+    #[test]
+    fn fixture_all_valid_no_broken() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/complex-renames/files/all-valid.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let valid = complex_registry_paths();
+        let (broken, valid_count) = analyze(&refs, &valid, &HashMap::new());
+
+        assert_eq!(broken.len(), 0);
+        assert_eq!(valid_count, 7); // all 7 refs are valid
     }
 }

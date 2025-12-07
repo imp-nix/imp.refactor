@@ -22,6 +22,10 @@ pub struct RegistryRef {
     pub line: usize,
     /// Column number, 1-indexed.
     pub column: usize,
+    /// Byte offset of the start of the entire select expression.
+    pub start_offset: usize,
+    /// Byte offset of the end of the entire select expression.
+    pub end_offset: usize,
 }
 
 /// Collects all `.nix` files under `paths`, excluding hidden and underscore-prefixed directories.
@@ -77,13 +81,17 @@ pub fn extract_registry_refs(file: &Path, registry_name: &str) -> Result<Vec<Reg
         if let WalkEvent::Enter(node) = event {
             if node.kind() == SyntaxKind::NODE_SELECT {
                 if let Some(path) = extract_dotted_path(&node, registry_name) {
-                    let start = node.text_range().start();
-                    let (line, column) = offset_to_line_col(&source, start.into());
+                    let range = node.text_range();
+                    let start: usize = range.start().into();
+                    let end: usize = range.end().into();
+                    let (line, column) = offset_to_line_col(&source, start);
                     refs.push(RegistryRef {
                         path,
                         file: file.to_path_buf(),
                         line,
                         column,
+                        start_offset: start,
+                        end_offset: end,
                     });
                 }
             }
@@ -285,5 +293,104 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/migrate-test/outputs");
         let files = collect_nix_files(&[fixture_dir]).unwrap();
         assert_eq!(files.len(), 3);
+    }
+
+    #[test]
+    fn extracts_from_config_b_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/migrate-test/outputs/config-b.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, vec!["users.alice", "mods.nixos"]);
+    }
+
+    #[test]
+    fn extracts_from_mixed_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/migrate-test/outputs/mixed.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(paths, vec!["hosts.server", "users.bob"]);
+    }
+
+    #[test]
+    fn extracts_from_deep_nesting_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/complex-renames/files/deep-nesting.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "svc.db.postgresql",
+                "svc.db.redis",
+                "svc.http.nginx",
+                "svc.http.caddy",
+                "utils.helpers.strings",
+            ]
+        );
+    }
+
+    #[test]
+    fn extracts_from_ambiguous_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/complex-renames/files/ambiguous.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "old.programs.editor",
+                "old.desktop.gnome",
+                "config.server.minimal",
+                "configs.base",
+            ]
+        );
+    }
+
+    #[test]
+    fn extracts_from_partial_valid_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/complex-renames/files/partial-valid.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "users.alice.programs.editor",
+                "services.database.postgresql",
+                "profiles.desktop.gnome",
+                "home.bob.shell",
+                "svc.web.caddy",
+            ]
+        );
+    }
+
+    #[test]
+    fn extracts_from_all_valid_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/complex-renames/files/all-valid.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "users.alice.programs.editor",
+                "users.alice.programs.zsh",
+                "users.bob.shell",
+                "services.database.postgresql",
+                "services.web.nginx",
+                "profiles.desktop.gnome",
+                "lib.helpers.strings",
+            ]
+        );
+    }
+
+    #[test]
+    fn collects_nix_files_from_complex_renames() {
+        let fixture_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/complex-renames/files");
+        let files = collect_nix_files(&[fixture_dir]).unwrap();
+        assert_eq!(files.len(), 6);
     }
 }

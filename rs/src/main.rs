@@ -8,6 +8,7 @@ mod cli;
 use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
+use dialoguer::Select;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -23,22 +24,40 @@ fn main() -> Result<()> {
         Commands::Detect {
             paths,
             registry_name,
+            git_ref,
             rename,
             json,
             verbose,
-        } => cmd_detect(paths, &registry_name, rename, json, verbose),
+        } => cmd_detect(
+            paths,
+            &registry_name,
+            git_ref.as_deref(),
+            rename,
+            json,
+            verbose,
+        ),
 
         Commands::Apply {
             write,
+            interactive,
             paths,
             registry_name,
+            git_ref,
             rename,
-        } => cmd_apply(write, paths, &registry_name, rename),
+        } => cmd_apply(
+            write,
+            interactive,
+            paths,
+            &registry_name,
+            git_ref.as_deref(),
+            rename,
+        ),
 
         Commands::Registry {
             registry_name,
+            git_ref,
             depth,
-        } => cmd_registry(&registry_name, depth),
+        } => cmd_registry(&registry_name, git_ref.as_deref(), depth),
 
         Commands::Scan { paths } => cmd_scan(paths),
     }
@@ -47,6 +66,7 @@ fn main() -> Result<()> {
 fn cmd_detect(
     paths: Option<Vec<PathBuf>>,
     registry_name: &str,
+    git_ref: Option<&str>,
     rename_map: Vec<(String, String)>,
     json_output: bool,
     verbose: bool,
@@ -60,9 +80,16 @@ fn cmd_detect(
             "info:".blue().bold(),
             files.len()
         );
+        if let Some(ref r) = git_ref {
+            eprintln!(
+                "{} Evaluating registry from git ref '{}'",
+                "info:".blue().bold(),
+                r
+            );
+        }
     }
 
-    let reg = registry::evaluate(registry_name)?;
+    let reg = registry::evaluate(registry_name, git_ref)?;
     let valid_paths = registry::flatten_paths(&reg, "");
     if verbose {
         eprintln!(
@@ -114,13 +141,18 @@ fn cmd_detect(
 
 fn cmd_apply(
     write: bool,
+    interactive: bool,
     paths: Option<Vec<PathBuf>>,
     registry_name: &str,
+    git_ref: Option<&str>,
     rename_map: Vec<(String, String)>,
 ) -> Result<()> {
+    // Interactive implies write
+    let should_write = write || interactive;
+
     let scan_paths = paths.unwrap_or_else(|| vec![PathBuf::from(".")]);
     let files = scanner::collect_nix_files(&scan_paths)?;
-    let reg = registry::evaluate(registry_name)?;
+    let reg = registry::evaluate(registry_name, git_ref)?;
     let valid_paths = registry::flatten_paths(&reg, "");
     let rename_map: HashMap<String, String> = rename_map.into_iter().collect();
 
@@ -147,9 +179,36 @@ fn cmd_apply(
         return Ok(());
     }
 
-    for (file, changes) in &changes_by_file {
-        let action = if write { "Updating:" } else { "Would update:" };
-        println!("\n{} {}", action.yellow().bold(), file.display());
+    // Sort files for consistent output
+    let mut files_with_changes: Vec<_> = changes_by_file.into_iter().collect();
+    files_with_changes.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let total_files = files_with_changes.len();
+    let total_changes: usize = files_with_changes.iter().map(|(_, c)| c.len()).sum();
+
+    if interactive {
+        println!(
+            "\n{} {} change(s) in {} file(s)\n",
+            "Found".cyan().bold(),
+            total_changes,
+            total_files
+        );
+    }
+
+    let mut applied_files = 0;
+    let mut applied_changes = 0;
+    let mut skipped_files = 0;
+
+    for (file, changes) in &files_with_changes {
+        // Print file header and changes
+        let action = if should_write && !interactive {
+            "Updating:"
+        } else if interactive {
+            "File:"
+        } else {
+            "Would update:"
+        };
+        println!("{} {}", action.yellow().bold(), file.display());
 
         for (reference, new_path) in changes {
             println!(
@@ -161,20 +220,83 @@ fn cmd_apply(
             );
         }
 
-        if write {
+        if interactive {
+            let choice = prompt_file_action(changes.len())?;
+            match choice {
+                FileAction::Apply => {
+                    rewriter::apply_changes(file, registry_name, changes)?;
+                    println!(
+                        "  {} Applied {} change(s)\n",
+                        "ok:".green().bold(),
+                        changes.len()
+                    );
+                    applied_files += 1;
+                    applied_changes += changes.len();
+                }
+                FileAction::Skip => {
+                    println!("  {} Skipped\n", "info:".blue().bold());
+                    skipped_files += 1;
+                }
+                FileAction::Abort => {
+                    println!("\n{} Aborted", "info:".blue().bold());
+                    return Ok(());
+                }
+            }
+        } else if should_write {
             rewriter::apply_changes(file, registry_name, changes)?;
+            applied_files += 1;
+            applied_changes += changes.len();
+        }
+
+        // Add blank line between files in non-interactive mode
+        if !interactive {
+            println!();
         }
     }
 
-    if !write {
-        println!("\n{} Use --write to apply changes", "hint:".cyan().bold());
+    // Summary
+    if interactive {
+        println!(
+            "{} Applied {} change(s) in {} file(s), skipped {} file(s)",
+            "Done:".green().bold(),
+            applied_changes,
+            applied_files,
+            skipped_files
+        );
+    } else if !should_write {
+        println!("{} Use --write to apply changes", "hint:".cyan().bold());
     }
 
     Ok(())
 }
 
-fn cmd_registry(registry_name: &str, depth: Option<usize>) -> Result<()> {
-    let reg = registry::evaluate(registry_name)?;
+/// User's choice for handling a file's changes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FileAction {
+    Apply,
+    Skip,
+    Abort,
+}
+
+/// Prompts the user to decide what to do with changes for a file.
+fn prompt_file_action(change_count: usize) -> Result<FileAction> {
+    let items = &["Apply", "Skip", "Abort (quit)"];
+
+    let selection = Select::new()
+        .with_prompt(format!("Apply {} change(s)?", change_count))
+        .items(items)
+        .default(0)
+        .interact()?;
+
+    Ok(match selection {
+        0 => FileAction::Apply,
+        1 => FileAction::Skip,
+        _ => FileAction::Abort,
+    })
+}
+
+fn cmd_registry(registry_name: &str, git_ref: Option<&str>, depth: Option<usize>) -> Result<()> {
+    let reg = registry::evaluate(registry_name, git_ref)?;
     registry::print_tree(&reg, depth.unwrap_or(usize::MAX), 0);
     Ok(())
 }

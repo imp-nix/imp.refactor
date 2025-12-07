@@ -21,8 +21,8 @@
 //!     refs.extend(scanner::extract_registry_refs(file, "registry").unwrap());
 //! }
 //!
-//! // Evaluate the registry and get valid paths
-//! let reg = registry::evaluate("registry").unwrap();
+//! // Evaluate the registry (None = current working tree, Some("HEAD") = committed state)
+//! let reg = registry::evaluate("registry", None).unwrap();
 //! let valid_paths = registry::flatten_paths(&reg, "");
 //!
 //! // Analyze references
