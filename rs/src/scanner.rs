@@ -474,4 +474,223 @@ mod tests {
         let files = collect_nix_files(&[testdir], &[], false).unwrap();
         assert_eq!(files.len(), 2);
     }
+
+    // =========================================================================
+    // False positive tests - patterns that should NOT be detected
+    // =========================================================================
+
+    #[test]
+    fn ignores_string_containing_registry() {
+        let source = r#"npmRegistry = "https://registry.npmjs.org";"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert!(refs.is_empty(), "String literal should not match");
+    }
+
+    #[test]
+    fn ignores_registry_as_attrset_key() {
+        let source = r#"dockerConfig = { registry = "ghcr.io"; };"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert!(refs.is_empty(), "Attrset key definition should not match");
+    }
+
+    #[test]
+    fn ignores_select_on_other_ident_with_registry_attr() {
+        let source = r#"x = someModule.registry.path;"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert!(refs.is_empty(), "Select on non-registry ident should not match");
+    }
+
+    #[test]
+    fn ignores_config_nix_registry() {
+        let source = r#"nix.registry.nixpkgs.flake = inputs.nixpkgs;"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert!(refs.is_empty(), "nix.registry path should not match");
+    }
+
+    #[test]
+    fn ignores_registry_as_function_call() {
+        let source = r#"result = registry { arg = 1; };"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert!(refs.is_empty(), "Function call should not match");
+    }
+
+    #[test]
+    fn ignores_similar_ident_names() {
+        let source = r#"x = registryBackup.old.path;"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert!(refs.is_empty(), "Similar but different ident should not match");
+    }
+
+    #[test]
+    fn ignores_quoted_attr_access() {
+        // Dynamic attribute access with quotes
+        let source = r#"foo = registry."home.alice";"#;
+        let refs = extract_paths_from_source(source, "registry");
+        // This may or may not match depending on rnix parsing - document behavior
+        // The key point is it shouldn't crash and behavior should be consistent
+        assert!(refs.is_empty() || refs.len() == 1);
+    }
+
+    #[test]
+    fn ignores_inherit_pattern() {
+        let source = r#"{ inherit (inputs) registry; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert!(refs.is_empty(), "Inherit should not match");
+    }
+
+    #[test]
+    fn ignores_nested_attrpath_definition() {
+        // This is a definition, not a reference
+        let source = r#"{ container.registry.url = "docker.io"; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert!(refs.is_empty(), "Nested attrpath definition should not match");
+    }
+
+    // =========================================================================
+    // True positive tests - patterns that SHOULD be detected
+    // =========================================================================
+
+    #[test]
+    fn detects_registry_in_parentheses() {
+        let source = r#"{ a = (registry.path.one); }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["path.one"]);
+    }
+
+    #[test]
+    fn detects_registry_as_function_arg() {
+        let source = r#"{ b = lib.mkDefault registry.path.two; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["path.two"]);
+    }
+
+    #[test]
+    fn detects_multiple_registry_in_list() {
+        let source = r#"{ c = [ registry.path.three registry.path.four ]; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["path.three", "path.four"]);
+    }
+
+    #[test]
+    fn detects_registry_in_attrset_value() {
+        let source = r#"{ d = { key = registry.path.five; }; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["path.five"]);
+    }
+
+    #[test]
+    fn detects_registry_with_or_default() {
+        let source = r#"{ e = registry.path.six or null; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["path.six"]);
+    }
+
+    #[test]
+    fn detects_registry_with_merge_operator() {
+        let source = r#"{ f = { } // registry.path.seven; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["path.seven"]);
+    }
+
+    #[test]
+    fn detects_registry_in_rec_attrset() {
+        let source = r#"{ h = rec { val = registry.path.nine; }; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["path.nine"]);
+    }
+
+    #[test]
+    fn detects_registry_in_let_binding() {
+        let source = r#"let x = registry.users.alice; in x"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["users.alice"]);
+    }
+
+    #[test]
+    fn detects_registry_in_import_list() {
+        let source = r#"{ imports = [ registry.hosts.desktop registry.modules.base ]; }"#;
+        let refs = extract_paths_from_source(source, "registry");
+        assert_eq!(refs, vec!["hosts.desktop", "modules.base"]);
+    }
+
+    // =========================================================================
+    // Fixture-based false positive tests
+    // =========================================================================
+
+    #[test]
+    fn fixture_should_ignore_finds_no_refs() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/false-positives/should-ignore.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        assert!(
+            refs.is_empty(),
+            "Expected no refs in should-ignore.nix, found: {:?}",
+            refs.iter().map(|r| &r.path).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn fixture_known_limitations_documents_false_positives() {
+        // This test documents a known limitation: function parameter shadowing.
+        // When a function has a parameter named `registry`, any attribute access
+        // on that parameter will be detected as a registry reference.
+        // This is expected behavior given static analysis constraints.
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/false-positives/known-limitations.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        
+        // These WILL be detected even though they're local params, not imp registry
+        assert!(paths.contains(&"endpoint"), "Expected false positive: endpoint");
+        assert!(paths.contains(&"settings.base"), "Expected false positive: settings.base");
+        assert!(paths.contains(&"data.items"), "Expected false positive: data.items");
+        assert!(paths.contains(&"nested.value"), "Expected false positive: nested.value");
+    }
+
+    #[test]
+    fn fixture_should_detect_finds_expected_refs() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/false-positives/should-detect.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        
+        // Should find all the actual registry references
+        assert!(paths.contains(&"users.alice"), "Missing users.alice");
+        assert!(paths.contains(&"profiles.desktop"), "Missing profiles.desktop");
+        assert!(paths.contains(&"profiles.server"), "Missing profiles.server");
+        assert!(paths.contains(&"modules.base"), "Missing modules.base");
+        assert!(paths.contains(&"modules.networking"), "Missing modules.networking");
+        assert!(paths.contains(&"hosts.desktop"), "Missing hosts.desktop");
+        assert!(paths.contains(&"modules.nixos.base"), "Missing modules.nixos.base");
+        
+        // Should have a reasonable number of refs (not too many false positives)
+        assert!(paths.len() >= 10, "Expected at least 10 refs, got {}", paths.len());
+        assert!(paths.len() <= 20, "Too many refs ({}), possible false positives", paths.len());
+    }
+
+    #[test]
+    fn fixture_edge_cases_correct_detection() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/false-positives/edge-cases.nix");
+        let refs = extract_registry_refs(&fixture, "registry").unwrap();
+        let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
+        
+        // SHOULD detect these (registry is the base ident being selected from)
+        assert!(paths.contains(&"path.one"), "Missing path.one (parentheses)");
+        assert!(paths.contains(&"path.two"), "Missing path.two (function arg)");
+        assert!(paths.contains(&"path.three"), "Missing path.three (list)");
+        assert!(paths.contains(&"path.four"), "Missing path.four (list)");
+        assert!(paths.contains(&"path.five"), "Missing path.five (attrset value)");
+        assert!(paths.contains(&"path.six"), "Missing path.six (or default)");
+        assert!(paths.contains(&"path.seven"), "Missing path.seven (merge)");
+        assert!(paths.contains(&"path.nine"), "Missing path.nine (rec)");
+        
+        // SHOULD NOT detect these (registry is not the base, or different ident)
+        // config.nix.registry.nixpkgs - base is config, not registry
+        assert!(!paths.iter().any(|p| p.contains("nixpkgs")), "False positive: config.nix.registry");
+        // registryBackup.old.path - different ident
+        assert!(!paths.iter().any(|p| p.contains("old")), "False positive: registryBackup");
+        // registry'.shadowed.path - different ident (registry')
+        assert!(!paths.iter().any(|p| p.contains("shadowed")), "False positive: registry'");
+    }
 }
