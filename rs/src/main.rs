@@ -23,6 +23,8 @@ fn main() -> Result<()> {
     match args.command {
         Commands::Detect {
             paths,
+            exclude,
+            no_default_excludes,
             registry_name,
             git_ref,
             rename,
@@ -30,6 +32,8 @@ fn main() -> Result<()> {
             verbose,
         } => cmd_detect(
             paths,
+            &exclude,
+            !no_default_excludes,
             &registry_name,
             git_ref.as_deref(),
             rename,
@@ -41,6 +45,8 @@ fn main() -> Result<()> {
             write,
             interactive,
             paths,
+            exclude,
+            no_default_excludes,
             registry_name,
             git_ref,
             rename,
@@ -48,6 +54,8 @@ fn main() -> Result<()> {
             write,
             interactive,
             paths,
+            &exclude,
+            !no_default_excludes,
             &registry_name,
             git_ref.as_deref(),
             rename,
@@ -59,12 +67,18 @@ fn main() -> Result<()> {
             depth,
         } => cmd_registry(&registry_name, git_ref.as_deref(), depth),
 
-        Commands::Scan { paths } => cmd_scan(paths),
+        Commands::Scan {
+            paths,
+            exclude,
+            no_default_excludes,
+        } => cmd_scan(paths, &exclude, !no_default_excludes),
     }
 }
 
 fn cmd_detect(
     paths: Option<Vec<PathBuf>>,
+    exclude: &[String],
+    use_default_excludes: bool,
     registry_name: &str,
     git_ref: Option<&str>,
     rename_map: Vec<(String, String)>,
@@ -73,7 +87,7 @@ fn cmd_detect(
 ) -> Result<()> {
     let scan_paths = paths.unwrap_or_else(|| vec![PathBuf::from(".")]);
 
-    let files = scanner::collect_nix_files(&scan_paths)?;
+    let files = scanner::collect_nix_files(&scan_paths, exclude, use_default_excludes)?;
     if verbose {
         eprintln!(
             "{} Found {} .nix files to scan",
@@ -143,6 +157,8 @@ fn cmd_apply(
     write: bool,
     interactive: bool,
     paths: Option<Vec<PathBuf>>,
+    exclude: &[String],
+    use_default_excludes: bool,
     registry_name: &str,
     git_ref: Option<&str>,
     rename_map: Vec<(String, String)>,
@@ -151,7 +167,7 @@ fn cmd_apply(
     let should_write = write || interactive;
 
     let scan_paths = paths.unwrap_or_else(|| vec![PathBuf::from(".")]);
-    let files = scanner::collect_nix_files(&scan_paths)?;
+    let files = scanner::collect_nix_files(&scan_paths, exclude, use_default_excludes)?;
     let reg = registry::evaluate(registry_name, git_ref)?;
     let valid_paths = registry::flatten_paths(&reg, "");
     let rename_map: HashMap<String, String> = rename_map.into_iter().collect();
@@ -301,9 +317,13 @@ fn cmd_registry(registry_name: &str, git_ref: Option<&str>, depth: Option<usize>
     Ok(())
 }
 
-fn cmd_scan(paths: Option<Vec<PathBuf>>) -> Result<()> {
+fn cmd_scan(
+    paths: Option<Vec<PathBuf>>,
+    exclude: &[String],
+    use_default_excludes: bool,
+) -> Result<()> {
     let scan_paths = paths.unwrap_or_else(|| vec![PathBuf::from(".")]);
-    let files = scanner::collect_nix_files(&scan_paths)?;
+    let files = scanner::collect_nix_files(&scan_paths, exclude, use_default_excludes)?;
 
     println!("Would scan {} files:", files.len());
     for file in files {

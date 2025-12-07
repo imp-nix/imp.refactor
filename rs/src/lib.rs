@@ -15,7 +15,7 @@
 //! use std::path::PathBuf;
 //!
 //! // Collect files and extract references
-//! let files = scanner::collect_nix_files(&[PathBuf::from("./nix")]).unwrap();
+//! let files = scanner::collect_nix_files(&[PathBuf::from("./nix")], &[], true).unwrap();
 //! let mut refs = Vec::new();
 //! for file in &files {
 //!     refs.extend(scanner::extract_registry_refs(file, "registry").unwrap());

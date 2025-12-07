@@ -1,10 +1,12 @@
 //! Nix file scanner.
 //!
 //! Recursively walks directories to collect `.nix` files, skipping entries
-//! whose names start with `.` or `_`. Uses rnix to parse each file and extract
-//! `registry.X.Y.Z` attribute selection expressions from the AST.
+//! whose names start with `.` or `_`, plus any paths matching user-provided
+//! glob patterns. Uses rnix to parse each file and extract `registry.X.Y.Z`
+//! attribute selection expressions from the AST.
 
 use anyhow::{Context, Result};
+use glob::Pattern;
 use rnix::SyntaxKind;
 use rowan::{WalkEvent, ast::AstNode};
 use serde::Serialize;
@@ -28,14 +30,27 @@ pub struct RegistryRef {
     pub end_offset: usize,
 }
 
-/// Collects all `.nix` files under `paths`, excluding hidden and underscore-prefixed directories.
-pub fn collect_nix_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+/// Collects all `.nix` files under `paths`, applying exclusion rules.
+///
+/// When `use_default_excludes` is true, entries starting with `.` or `_` are skipped.
+/// Additional patterns from `exclude_patterns` are matched against both filenames
+/// and full paths.
+pub fn collect_nix_files(
+    paths: &[PathBuf],
+    exclude_patterns: &[String],
+    use_default_excludes: bool,
+) -> Result<Vec<PathBuf>> {
+    let patterns: Vec<Pattern> = exclude_patterns
+        .iter()
+        .filter_map(|p| Pattern::new(p).ok())
+        .collect();
+
     let mut files = Vec::new();
 
     for path in paths {
         for entry in WalkDir::new(path)
             .into_iter()
-            .filter_entry(|e| !is_hidden_or_underscore(e))
+            .filter_entry(|e| !should_exclude(e, &patterns, use_default_excludes))
         {
             let entry = entry?;
             if entry.file_type().is_file()
@@ -49,11 +64,23 @@ pub fn collect_nix_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn is_hidden_or_underscore(entry: &walkdir::DirEntry) -> bool {
-    entry
-        .file_name()
-        .to_str()
-        .is_some_and(|s| s.starts_with('.') || s.starts_with('_'))
+fn should_exclude(
+    entry: &walkdir::DirEntry,
+    patterns: &[Pattern],
+    use_default_excludes: bool,
+) -> bool {
+    let name = entry.file_name().to_str().unwrap_or("");
+
+    // Default exclusions: hidden and underscore-prefixed entries
+    if use_default_excludes && (name.starts_with('.') || name.starts_with('_')) {
+        return true;
+    }
+
+    // Check against user-provided glob patterns
+    let path_str = entry.path().to_string_lossy();
+    patterns
+        .iter()
+        .any(|p| p.matches(&path_str) || p.matches(name))
 }
 
 /// Parses a Nix file and extracts all `registry_name.X.Y...` attribute selections.
@@ -291,7 +318,7 @@ mod tests {
     fn collects_nix_files_from_fixture() {
         let fixture_dir =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/migrate-test/outputs");
-        let files = collect_nix_files(&[fixture_dir]).unwrap();
+        let files = collect_nix_files(&[fixture_dir], &[], true).unwrap();
         assert_eq!(files.len(), 3);
     }
 
@@ -390,7 +417,61 @@ mod tests {
     fn collects_nix_files_from_complex_renames() {
         let fixture_dir =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/complex-renames/files");
-        let files = collect_nix_files(&[fixture_dir]).unwrap();
+        let files = collect_nix_files(&[fixture_dir], &[], true).unwrap();
         assert_eq!(files.len(), 6);
+    }
+
+    #[test]
+    fn exclude_pattern_filters_by_name() {
+        let fixture_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/complex-renames/files");
+        let files =
+            collect_nix_files(&[fixture_dir], &["ambiguous.nix".to_string()], true).unwrap();
+        assert_eq!(files.len(), 5);
+    }
+
+    #[test]
+    fn exclude_pattern_with_glob() {
+        let fixture_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/complex-renames/files");
+        let files = collect_nix_files(&[fixture_dir], &["*valid*".to_string()], true).unwrap();
+        // Excludes all-valid.nix and partial-valid.nix
+        assert_eq!(files.len(), 4);
+    }
+
+    #[test]
+    fn no_default_excludes_includes_dotfiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let testdir = tmp.path().join("testroot");
+        std::fs::create_dir(&testdir).unwrap();
+        let dotdir = testdir.join(".hidden");
+        std::fs::create_dir(&dotdir).unwrap();
+        std::fs::write(dotdir.join("test.nix"), "{}").unwrap();
+        std::fs::write(testdir.join("visible.nix"), "{}").unwrap();
+
+        // With defaults, hidden dir is excluded
+        let files = collect_nix_files(&[testdir.clone()], &[], true).unwrap();
+        assert_eq!(files.len(), 1);
+
+        // Without defaults, hidden dir is included
+        let files = collect_nix_files(&[testdir], &[], false).unwrap();
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn no_default_excludes_includes_underscored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let testdir = tmp.path().join("testroot");
+        std::fs::create_dir(&testdir).unwrap();
+        std::fs::write(testdir.join("_internal.nix"), "{}").unwrap();
+        std::fs::write(testdir.join("public.nix"), "{}").unwrap();
+
+        // With defaults, underscore-prefixed is excluded
+        let files = collect_nix_files(&[testdir.clone()], &[], true).unwrap();
+        assert_eq!(files.len(), 1);
+
+        // Without defaults, underscore-prefixed is included
+        let files = collect_nix_files(&[testdir], &[], false).unwrap();
+        assert_eq!(files.len(), 2);
     }
 }

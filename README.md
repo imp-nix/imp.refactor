@@ -1,68 +1,57 @@
 # imp.refactor
 
-Detect and fix broken registry references in Nix projects. When you rename a directory in your imp registry, this tool finds all `registry.old.path` references in your codebase and rewrites them to `registry.new.path`.
+Detect and fix broken registry references in Nix projects.
 
-## The Problem
+The [imp registry](https://github.com/imp-nix/imp.lib) maps directory structure to attribute paths: `registry/users/alice/default.nix` becomes `registry.users.alice`. When you rename `registry/home/` to `registry/users/`, every `registry.home.alice` reference breaks. This tool scans your `.nix` files for broken references and rewrites them.
 
-After renaming `nix/registry/home/` to `nix/registry/users/`, every file that references `registry.home.alice` breaks. Finding and fixing these manually is tedious and error-prone. The pure-Nix approach in imp.lib's `migrate.nix` cannot work because Nix flake evaluation copies everything to the store before it runs, meaning both the scanned files and the registry reflect the same (post-rename) state.
-
-imp.refactor solves this by operating directly on your working directory while evaluating the registry from git HEAD.
+A pure-Nix solution cannot work here. Flake evaluation copies everything to the store before code runs, so the scanned files and registry always reflect the same committed state. imp.refactor operates directly on working tree files while evaluating the registry from a git ref, allowing it to detect drift between the two.
 
 ## Usage
 
 ```sh
-# Scan working tree, show broken refs with suggestions
-nix run github:imp-nix/imp.refactor -- detect
-
-# Same, but with explicit rename hints
-nix run github:imp-nix/imp.refactor -- detect --rename home=users
-
-# Preview what would change
-nix run github:imp-nix/imp.refactor -- apply
-
-# Actually rewrite files
-nix run github:imp-nix/imp.refactor -- apply --write
+nix run github:imp-nix/imp.refactor -- detect                    # find broken refs
+nix run github:imp-nix/imp.refactor -- detect --rename home=users # explicit rename hints
+nix run github:imp-nix/imp.refactor -- apply                     # preview changes
+nix run github:imp-nix/imp.refactor -- apply --write             # rewrite files
+nix run github:imp-nix/imp.refactor -- apply --interactive       # confirm each file
 ```
 
-### Commands
-
-**detect** scans `.nix` files for `registry.X.Y.Z` patterns, validates each path against the evaluated registry, and reports broken references. For each broken ref, it attempts to suggest a replacement using either an explicit rename map or a leaf-name heuristic (finds paths ending with the same final segment).
+The `detect` command scans `.nix` files for `registry.X.Y.Z` patterns using `rnix` AST parsing (not regex), validates each against `nix eval .#registry`, and reports broken references. For each broken ref, it suggests a replacement via an explicit rename map or a leaf-name heuristic that matches the final path segment.
 
 ```sh
 imp-refactor detect --paths ./nix/outputs --verbose
 imp-refactor detect --rename home=users --rename svc=services
-imp-refactor detect --json  # machine-readable output
+imp-refactor detect --json
 ```
 
-**apply** rewrites broken references in-place. Without `--write`, it shows a diff of proposed changes.
+The `apply` command rewrites broken references. Without `--write`, it shows a unified diff of proposed changes. With `--interactive`, it prompts for confirmation before modifying each file.
 
 ```sh
-imp-refactor apply              # dry-run
-imp-refactor apply --write      # modify files
+imp-refactor apply                          # dry-run
+imp-refactor apply --write                  # modify files
+imp-refactor apply --interactive            # per-file prompts
+imp-refactor apply --git-ref HEAD^ --write  # compare against previous commit
 ```
 
-**registry** displays the current registry structure for debugging.
+The `registry` command displays the current registry structure for debugging. The `scan` command lists which files would be scanned.
+
+## Internals
+
+The scanner walks the working directory collecting `.nix` files. By default, entries starting with `.` or `_` are skipped. Use `--exclude` to add glob patterns, or `--no-default-excludes` to disable the defaults entirely:
 
 ```sh
-imp-refactor registry
-imp-refactor registry --depth 2
+imp-refactor detect --exclude "node_modules" --exclude "*.generated.nix"
+imp-refactor detect --no-default-excludes  # scan everything
 ```
-
-**scan** shows which files would be scanned, useful for verifying path configuration.
-
-## How It Works
 
 The tool runs in four stages:
 
-1. Walk the working directory (not store paths) collecting `.nix` files, skipping directories prefixed with `.` or `_`.
+1. Walk directories collecting `.nix` files, filtering by exclude patterns.
+1. Parse each file with `rnix` and extract attribute access chains starting with the registry name. AST parsing correctly handles multi-line expressions, comments, and string literals.
+1. Evaluate `nix eval --json .#registry` to get the registry structure, then flatten it into a set of valid dotted paths.
+1. Compare extracted references against valid paths. Broken refs get suggestions via rename map (longest prefix wins) or leaf-name heuristic (unique suffix match).
 
-1. Parse each file with `rnix` and extract attribute access chains that start with the registry name. Unlike regex, this correctly handles multi-line expressions, comments, and string literals.
-
-1. Evaluate `nix eval --json .#registry` to get the current registry structure, then flatten it into a set of valid dotted paths.
-
-1. Compare extracted references against valid paths. Broken refs get suggestions via rename map (longest-prefix-wins) or leaf-name heuristic (unique suffix match).
-
-## Rename Map
+## Rename maps
 
 When the leaf-name heuristic fails (ambiguous matches or actual leaf renames), provide explicit mappings:
 
@@ -70,7 +59,7 @@ When the leaf-name heuristic fails (ambiguous matches or actual leaf renames), p
 imp-refactor detect --rename home=users --rename "svc.db=services.database"
 ```
 
-The `--rename` flag accepts `old=new` pairs. Longer prefixes take precedence, so `--rename home=users --rename home.alice=admins.alice` correctly maps `home.alice.settings` to `admins.alice.settings`.
+Longer prefixes take precedence, so `--rename home=users --rename home.alice=admins.alice` maps `home.alice.settings` to `admins.alice.settings` rather than `users.alice.settings`.
 
 ## Development
 

@@ -23,6 +23,15 @@ pub enum Commands {
         #[arg(short, long)]
         paths: Option<Vec<PathBuf>>,
 
+        /// Glob patterns for directories/files to exclude (e.g., "node_modules", "*.generated.nix").
+        /// By default, entries starting with `.` or `_` are excluded.
+        #[arg(short, long)]
+        exclude: Vec<String>,
+
+        /// Disable default exclusion of `.` and `_` prefixed entries.
+        #[arg(long)]
+        no_default_excludes: bool,
+
         /// Registry attribute name in flake outputs.
         #[arg(long, default_value = "registry")]
         registry_name: String,
@@ -60,6 +69,15 @@ pub enum Commands {
         #[arg(short, long)]
         paths: Option<Vec<PathBuf>>,
 
+        /// Glob patterns for directories/files to exclude (e.g., "node_modules", "*.generated.nix").
+        /// By default, entries starting with `.` or `_` are excluded.
+        #[arg(short, long)]
+        exclude: Vec<String>,
+
+        /// Disable default exclusion of `.` and `_` prefixed entries.
+        #[arg(long)]
+        no_default_excludes: bool,
+
         /// Registry attribute name in flake outputs.
         #[arg(long, default_value = "registry")]
         registry_name: String,
@@ -93,6 +111,15 @@ pub enum Commands {
         /// Paths to scan. Defaults to current directory.
         #[arg(short, long)]
         paths: Option<Vec<PathBuf>>,
+
+        /// Glob patterns for directories/files to exclude (e.g., "node_modules", "*.generated.nix").
+        /// By default, entries starting with `.` or `_` are excluded.
+        #[arg(short, long)]
+        exclude: Vec<String>,
+
+        /// Disable default exclusion of `.` and `_` prefixed entries.
+        #[arg(long)]
+        no_default_excludes: bool,
     },
 }
 
