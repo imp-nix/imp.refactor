@@ -497,7 +497,10 @@ mod tests {
     fn ignores_select_on_other_ident_with_registry_attr() {
         let source = r#"x = someModule.registry.path;"#;
         let refs = extract_paths_from_source(source, "registry");
-        assert!(refs.is_empty(), "Select on non-registry ident should not match");
+        assert!(
+            refs.is_empty(),
+            "Select on non-registry ident should not match"
+        );
     }
 
     #[test]
@@ -518,7 +521,10 @@ mod tests {
     fn ignores_similar_ident_names() {
         let source = r#"x = registryBackup.old.path;"#;
         let refs = extract_paths_from_source(source, "registry");
-        assert!(refs.is_empty(), "Similar but different ident should not match");
+        assert!(
+            refs.is_empty(),
+            "Similar but different ident should not match"
+        );
     }
 
     #[test]
@@ -543,7 +549,10 @@ mod tests {
         // This is a definition, not a reference
         let source = r#"{ container.registry.url = "docker.io"; }"#;
         let refs = extract_paths_from_source(source, "registry");
-        assert!(refs.is_empty(), "Nested attrpath definition should not match");
+        assert!(
+            refs.is_empty(),
+            "Nested attrpath definition should not match"
+        );
     }
 
     // =========================================================================
@@ -639,12 +648,24 @@ mod tests {
             .join("tests/fixtures/false-positives/known-limitations.nix");
         let refs = extract_registry_refs(&fixture, "registry").unwrap();
         let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
-        
+
         // These WILL be detected even though they're local params, not imp registry
-        assert!(paths.contains(&"endpoint"), "Expected false positive: endpoint");
-        assert!(paths.contains(&"settings.base"), "Expected false positive: settings.base");
-        assert!(paths.contains(&"data.items"), "Expected false positive: data.items");
-        assert!(paths.contains(&"nested.value"), "Expected false positive: nested.value");
+        assert!(
+            paths.contains(&"endpoint"),
+            "Expected false positive: endpoint"
+        );
+        assert!(
+            paths.contains(&"settings.base"),
+            "Expected false positive: settings.base"
+        );
+        assert!(
+            paths.contains(&"data.items"),
+            "Expected false positive: data.items"
+        );
+        assert!(
+            paths.contains(&"nested.value"),
+            "Expected false positive: nested.value"
+        );
     }
 
     #[test]
@@ -653,19 +674,39 @@ mod tests {
             .join("tests/fixtures/false-positives/should-detect.nix");
         let refs = extract_registry_refs(&fixture, "registry").unwrap();
         let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
-        
+
         // Should find all the actual registry references
         assert!(paths.contains(&"users.alice"), "Missing users.alice");
-        assert!(paths.contains(&"profiles.desktop"), "Missing profiles.desktop");
-        assert!(paths.contains(&"profiles.server"), "Missing profiles.server");
+        assert!(
+            paths.contains(&"profiles.desktop"),
+            "Missing profiles.desktop"
+        );
+        assert!(
+            paths.contains(&"profiles.server"),
+            "Missing profiles.server"
+        );
         assert!(paths.contains(&"modules.base"), "Missing modules.base");
-        assert!(paths.contains(&"modules.networking"), "Missing modules.networking");
+        assert!(
+            paths.contains(&"modules.networking"),
+            "Missing modules.networking"
+        );
         assert!(paths.contains(&"hosts.desktop"), "Missing hosts.desktop");
-        assert!(paths.contains(&"modules.nixos.base"), "Missing modules.nixos.base");
-        
+        assert!(
+            paths.contains(&"modules.nixos.base"),
+            "Missing modules.nixos.base"
+        );
+
         // Should have a reasonable number of refs (not too many false positives)
-        assert!(paths.len() >= 10, "Expected at least 10 refs, got {}", paths.len());
-        assert!(paths.len() <= 20, "Too many refs ({}), possible false positives", paths.len());
+        assert!(
+            paths.len() >= 10,
+            "Expected at least 10 refs, got {}",
+            paths.len()
+        );
+        assert!(
+            paths.len() <= 20,
+            "Too many refs ({}), possible false positives",
+            paths.len()
+        );
     }
 
     #[test]
@@ -674,23 +715,41 @@ mod tests {
             .join("tests/fixtures/false-positives/edge-cases.nix");
         let refs = extract_registry_refs(&fixture, "registry").unwrap();
         let paths: Vec<_> = refs.iter().map(|r| r.path.as_str()).collect();
-        
+
         // SHOULD detect these (registry is the base ident being selected from)
-        assert!(paths.contains(&"path.one"), "Missing path.one (parentheses)");
-        assert!(paths.contains(&"path.two"), "Missing path.two (function arg)");
+        assert!(
+            paths.contains(&"path.one"),
+            "Missing path.one (parentheses)"
+        );
+        assert!(
+            paths.contains(&"path.two"),
+            "Missing path.two (function arg)"
+        );
         assert!(paths.contains(&"path.three"), "Missing path.three (list)");
         assert!(paths.contains(&"path.four"), "Missing path.four (list)");
-        assert!(paths.contains(&"path.five"), "Missing path.five (attrset value)");
+        assert!(
+            paths.contains(&"path.five"),
+            "Missing path.five (attrset value)"
+        );
         assert!(paths.contains(&"path.six"), "Missing path.six (or default)");
         assert!(paths.contains(&"path.seven"), "Missing path.seven (merge)");
         assert!(paths.contains(&"path.nine"), "Missing path.nine (rec)");
-        
+
         // SHOULD NOT detect these (registry is not the base, or different ident)
         // config.nix.registry.nixpkgs - base is config, not registry
-        assert!(!paths.iter().any(|p| p.contains("nixpkgs")), "False positive: config.nix.registry");
+        assert!(
+            !paths.iter().any(|p| p.contains("nixpkgs")),
+            "False positive: config.nix.registry"
+        );
         // registryBackup.old.path - different ident
-        assert!(!paths.iter().any(|p| p.contains("old")), "False positive: registryBackup");
+        assert!(
+            !paths.iter().any(|p| p.contains("old")),
+            "False positive: registryBackup"
+        );
         // registry'.shadowed.path - different ident (registry')
-        assert!(!paths.iter().any(|p| p.contains("shadowed")), "False positive: registry'");
+        assert!(
+            !paths.iter().any(|p| p.contains("shadowed")),
+            "False positive: registry'"
+        );
     }
 }

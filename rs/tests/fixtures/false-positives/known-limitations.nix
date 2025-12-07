@@ -9,19 +9,29 @@
 
 let
   # Function with registry as a parameter - the body will match
-  mkService = { registry, port }: {
-    url = registry.endpoint;  # WILL MATCH: registry.endpoint
-    config = registry.settings.base;  # WILL MATCH: registry.settings.base
-  };
-  
+  mkService =
+    { registry, port }:
+    {
+      url = registry.endpoint; # WILL MATCH: registry.endpoint
+      config = registry.settings.base; # WILL MATCH: registry.settings.base
+    };
+
   # Lambda with registry parameter
-  processRegistry = registry: registry.data.items;  # WILL MATCH: registry.data.items
-  
+  processRegistry = registry: registry.data.items; # WILL MATCH: registry.data.items
+
   # Nested function with shadowing
-  outer = { registry, ... }: {
-    inner = registry.nested.value;  # WILL MATCH
-  };
-in {
+  outer =
+    { registry, ... }:
+    {
+      inner = registry.nested.value; # WILL MATCH
+    };
+in
+{
   # These all produce matches even though they're not imp registry refs
-  service = mkService { registry = { endpoint = "http://localhost"; }; port = 8080; };
+  service = mkService {
+    registry = {
+      endpoint = "http://localhost";
+    };
+    port = 8080;
+  };
 }

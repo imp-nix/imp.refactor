@@ -1,4 +1,8 @@
-# Unit tests for imp-refactor nix lib
+/**
+  Unit tests for imp-refactor nix lib.
+
+  Run with: nix flake check
+*/
 { lib }:
 let
   refactorLib = import ../lib.nix { inherit lib; };

@@ -1,7 +1,9 @@
-# Nix helper functions for imp-refactor
-#
-# These functions assist with registry path analysis and can be used
-# for integration testing or as utilities from Nix code.
+/**
+  Nix helper functions for imp-refactor.
+
+  These functions assist with registry path analysis and can be used
+  for integration testing or as utilities from Nix code.
+*/
 { lib }:
 let
   inherit (lib)
