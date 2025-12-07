@@ -5,6 +5,14 @@ authors = ["Albert O'Shea <albertoshea2@gmail.com>"]
 edition = "2024"
 description = "Detect and fix broken registry references in Nix projects"
 
+[lib]
+name = "imp_refactor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "imp-refactor"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }

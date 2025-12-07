@@ -1,23 +1,9 @@
-//! imp-refactor: Detect and fix broken registry references in Nix projects.
+//! CLI entrypoint for imp-refactor.
 //!
-//! This tool addresses a limitation of pure-Nix migration: when evaluating a
-//! flake from git, both scanned files and the registry come from the same store
-//! path, making it impossible to detect references that became invalid after
-//! uncommitted changes. imp-refactor reads the working directory while evaluating
-//! the registry from git HEAD, exposing the discrepancy.
-//!
-//! The detection pipeline works in three stages:
-//! 1. Scanner collects `.nix` files and parses them with rnix to extract
-//!    `registry.X.Y.Z` attribute selection expressions
-//! 2. Registry evaluator shells out to `nix eval --json` to obtain valid paths
-//! 3. Analyzer compares references against valid paths and generates suggestions
-//!    using explicit rename mappings or a leaf-name heuristic
+//! This binary wraps the imp_refactor library to provide a command-line
+//! interface for detecting and fixing broken registry references.
 
-mod analyzer;
 mod cli;
-mod registry;
-mod rewriter;
-mod scanner;
 
 use anyhow::Result;
 use clap::Parser;
@@ -25,9 +11,10 @@ use colored::Colorize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use analyzer::{BrokenRef, DetectionResult, Diagnostics, analyze};
 use cli::{Args, Commands};
-use scanner::RegistryRef;
+use imp_refactor::{
+    BrokenRef, DetectionResult, Diagnostics, RegistryRef, analyzer, registry, rewriter, scanner,
+};
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -100,7 +87,7 @@ fn cmd_detect(
     }
 
     let rename_map: HashMap<String, String> = rename_map.into_iter().collect();
-    let (broken, valid_count) = analyze(&all_refs, &valid_paths, &rename_map);
+    let (broken, valid_count) = analyzer::analyze(&all_refs, &valid_paths, &rename_map);
 
     let diagnostics = Diagnostics {
         files_scanned: files.len(),
