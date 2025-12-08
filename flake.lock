@@ -31,11 +31,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1765197725,
-        "narHash": "sha256-x3EjWfxLecvDBkh1PZL/kAG/8RAjkmFltUL8e+ZQFLs=",
+        "lastModified": 1765198576,
+        "narHash": "sha256-HMfNvxRxPhKG4Lzkdn6N5LifMiilQK1DOAVFe2muwZs=",
         "owner": "imp-nix",
         "repo": "imp.fmt",
-        "rev": "81124d9322b048416e0568752acf84d09a8784bf",
+        "rev": "8c8aaa10fedf7db705f3bea36a480d1e6ffb7f9c",
         "type": "github"
       },
       "original": {
