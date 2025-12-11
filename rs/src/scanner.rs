@@ -71,6 +71,11 @@ fn should_exclude(
 ) -> bool {
     let name = entry.file_name().to_str().unwrap_or("");
 
+    // Never exclude the root entry (e.g., "." when scanning current directory)
+    if entry.depth() == 0 {
+        return false;
+    }
+
     // Default exclusions: hidden and underscore-prefixed entries
     if use_default_excludes && (name.starts_with('.') || name.starts_with('_')) {
         return true;
