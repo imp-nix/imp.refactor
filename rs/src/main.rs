@@ -42,7 +42,6 @@ fn main() -> Result<()> {
         ),
 
         Commands::Apply {
-            write,
             interactive,
             paths,
             exclude,
@@ -51,7 +50,6 @@ fn main() -> Result<()> {
             git_ref,
             rename,
         } => cmd_apply(
-            write,
             interactive,
             paths,
             &exclude,
@@ -154,7 +152,6 @@ fn cmd_detect(
 }
 
 fn cmd_apply(
-    write: bool,
     interactive: bool,
     paths: Option<Vec<PathBuf>>,
     exclude: &[String],
@@ -163,9 +160,6 @@ fn cmd_apply(
     git_ref: Option<&str>,
     rename_map: Vec<(String, String)>,
 ) -> Result<()> {
-    // Interactive implies write
-    let should_write = write || interactive;
-
     let scan_paths = paths.unwrap_or_else(|| vec![PathBuf::from(".")]);
     let files = scanner::collect_nix_files(&scan_paths, exclude, use_default_excludes)?;
     let reg = registry::evaluate(registry_name, git_ref)?;
@@ -217,13 +211,7 @@ fn cmd_apply(
 
     for (file, changes) in &files_with_changes {
         // Print file header and changes
-        let action = if should_write && !interactive {
-            "Updating:"
-        } else if interactive {
-            "File:"
-        } else {
-            "Would update:"
-        };
+        let action = if interactive { "File:" } else { "Updating:" };
         println!("{} {}", action.yellow().bold(), file.display());
 
         for (reference, new_path) in changes {
@@ -258,7 +246,7 @@ fn cmd_apply(
                     return Ok(());
                 }
             }
-        } else if should_write {
+        } else {
             rewriter::apply_changes(file, registry_name, changes)?;
             applied_files += 1;
             applied_changes += changes.len();
@@ -279,8 +267,6 @@ fn cmd_apply(
             applied_files,
             skipped_files
         );
-    } else if !should_write {
-        println!("{} Use --write to apply changes", "hint:".cyan().bold());
     }
 
     Ok(())

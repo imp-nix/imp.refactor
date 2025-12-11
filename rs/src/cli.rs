@@ -56,12 +56,7 @@ pub enum Commands {
 
     /// Apply suggested renames to files.
     Apply {
-        /// Write changes to disk. Without this flag, operates as dry-run.
-        #[arg(long)]
-        write: bool,
-
         /// Interactively confirm each file's changes before applying.
-        /// Implies --write.
         #[arg(short, long)]
         interactive: bool,
 
